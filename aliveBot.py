@@ -17,6 +17,14 @@ import requests
 import unicodedata
 import json
 import time
+import datetime
+import lxml.html
+from extractors import (
+    extract_level, extract_endorsement, extract_icon_url,
+    extract_competitive_rank, extract_time_played_ratios, extract_stats
+)
+from ids import OVERALL_CATEGORY_ID, HERO_CATEGORY_IDS
+from utils import has_played
 
 # for lolplayersearch
 tierScore = {
@@ -39,6 +47,10 @@ def tierCompare(solorank,flexrank):
         return 1
     else:
         return 2
+
+def convert_seconds_to_time(in_seconds):
+    """초를 입력받아 n days, nn:nn:nn으로 변환"""
+    return str(datetime.timedelta(seconds=in_seconds))
 
 def deleteTags(htmls):
     for a in range(len(htmls)):
@@ -75,8 +87,8 @@ async def on_ready():
     logging.info("bot id : %s", client.user.id)
     client.loop.create_task(status_task())
     #봇 상태 출력
-    #game = discord.Game("개발중... 하하하하.!!!")
-    #await client.change_presence(status=discord.Status.online, activity=game)
+    # game = discord.Game("개발중... 하하하하.!!!")
+    # await client.change_presence(status=discord.Status.online, activity=game)
 
 @client.event
 async def on_member_join(member):
@@ -903,6 +915,319 @@ async def on_message(message):
             embed.add_field(name="해당 닉네임의 소환사가 존재하지 않습니다.", value="소환사 이름을 확인해주세요", inline=False)
             await message.channel.send("Error : Non existing Summoner ", embed=embed)
     
+    if message.content.startswith("!!옵치일반"):
+        STATS_URL = 'https://playoverwatch.com/en-us/career/{platform}/{battle_tag}'
+        AVAILABLE_PLAY_MODES = ('quick', 'competitive')
+        playerNickname = ''.join((message.content).split(' ')[1:])
+        try:
+            if len(message.content.split(" ")) == 1:
+                embed = discord.Embed(title="닉네임이 입력되지 않았습니다", description="", color=0x5CD1E5)
+                embed.add_field(name="Player nickname not entered",value="To use command !!옵치일반 (Nickname)", inline=False)
+                await message.channel.send("Error : Incorrect command usage ", embed=embed)
+            else:
+                
+                tagName = message.content.split(" ")[1:]
+                name = tagName[0].replace("#", "-")                
+                url = STATS_URL.format(platform='pc', battle_tag=name)
+
+                response = requests.get(url)
+
+                if response == None:
+                    embed = discord.Embed(title="Record not found", description="OverWatch Profile not found.",color=0x5CD1E5)
+                    embed.add_field(name="Profile search from overWatch API", value=URL, inline=False)
+                    await message.channel.send("OverWatch player " + playerNickname + "'s Profile not information",embed=embed)
+                else:
+                    if response.status_code == 200:
+                        tree = lxml.html.fromstring(response.text)
+                        output = {}
+                        output['level'] = extract_level(tree)
+                        output['endorsement'] = extract_endorsement(tree)
+                        output['icon_url'] = extract_icon_url(tree)
+                        competitive_rank = extract_competitive_rank(tree)
+                        if competitive_rank:
+                            output['competitive_rank'] = competitive_rank
+
+                        for mode in AVAILABLE_PLAY_MODES:
+                            if not has_played(tree, mode):
+                                continue
+
+                            output[mode] = {
+                                'overall': {},
+                                'heroes': {},
+                            }
+
+                            # overall
+                            output[mode]['overall'] = extract_stats(tree, mode, OVERALL_CATEGORY_ID)
+
+                            # heroes
+                            time_played_ratios = extract_time_played_ratios(tree, mode)
+                            for hero, category_id in HERO_CATEGORY_IDS.items():
+                                if not has_played(tree, mode, category_id):
+                                    continue
+
+                                output[mode]['heroes'][hero] = extract_stats(tree, mode, category_id)
+                                output[mode]['heroes'][hero]['time_played_ratio'] = time_played_ratios[hero]
+
+                        e = discord.Embed(color=0xFC9A23, title="{} Overwatch Profile".format(playerNickname))
+                        e.add_field(name="Level", value="```" + str(output['level']) + "```")
+                        
+                        endorsement = output['endorsement']
+                        e.add_field(name="endorsement Level", value="```" + str(endorsement['level']) + "```", inline=True)
+                        e.add_field(name="shotcaller", value="```" + str(endorsement['shotcaller']) + "```", inline=True)
+                        e.add_field(name="teammate", value="```" + str(endorsement['teammate']) + "```", inline=True)
+                        e.add_field(name="sportsmanship", value="```" + str(endorsement['sportsmanship']) + "```", inline=True)
+                        e.set_thumbnail(url=output['icon_url'])
+                        await message.channel.send("OVERWATCH player " + playerNickname + "'s Profile information",embed=e)
+
+                        quickData = output['quick']
+
+                        if quickData != None:
+                            overallData = quickData['overall']
+                            #heroesData = quickData['heroes']
+
+                            if overallData != None:
+                                e1 = discord.Embed(color=0xFC9A23, title="{} Overwatch Best".format(playerNickname))
+                                e1.add_field(name="모든 피해 완료", value="```" + str(overallData['all_damage_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="배리어 데미지 완료", value="```" + str(overallData['barrier_damage_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="수비 지원", value="```" + str(overallData['defensive_assist_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="처치", value="```" + str(overallData['elimination_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="환경 처치", value="```" + str(overallData['environmental_kill_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="결정타", value="```" + str(overallData['final_blow_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="치유 완료", value="```" + str(overallData['healing_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="영웅 피해 완료", value="```" + str(overallData['hero_damage_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="연속 처치-최고", value="```" + str(overallData['kill_streak_best']) + "```", inline=True)
+                                e1.add_field(name="근접 결정타", value="```" + str(overallData['melee_final_blow_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="멀티 킬-최고", value="```" + str(overallData['multikill_best']) + "```", inline=True)
+                                e1.add_field(name="목표 처치", value="```" + str(overallData['objective_kill_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="목표 시간", value="```" + convert_seconds_to_time(overallData['objective_time_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="공격 지원", value="```" + str(overallData['offensive_assist_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="정찰 지원", value="```" + str(overallData['recon_assist_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="솔로 처치", value="```" + str(overallData['solo_kill_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="파괴 된 순간 이동기 패드", value="```" + str(overallData['teleporter_pad_destroyed_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="폭주 시간", value="```" + convert_seconds_to_time(overallData['time_spent_on_fire_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="파괴 된 포탑", value="```" + str(overallData['turret_destroyed_most_in_game']) + "```", inline=True)
+                                await message.channel.send(embed=e1)
+
+                                e2 = discord.Embed(color=0xFC9A23, title="{} Overwatch Assists".format(playerNickname))
+                                e2.add_field(name="방어 지원", value="```" + str(overallData['defensive_assist']) + "```", inline=True)
+                                e2.add_field(name="치유 완료", value="```" + str(overallData['healing_done']) + "```", inline=True)
+                                e2.add_field(name="공격 지원", value="```" + str(overallData['offensive_assist']) + "```", inline=True)
+                                e2.add_field(name="정찰 지원", value="```" + str(overallData['recon_assist']) + "```", inline=True)
+                                await message.channel.send(embed=e2)
+
+                                e3 = discord.Embed(color=0xFC9A23, title="{} Overwatch Game".format(playerNickname))
+                                e3.add_field(name="패배 한 경기", value="```" + str(overallData['game_lost']) + "```", inline=True)
+                                e3.add_field(name="플레이 한 경기", value="```" + str(overallData['game_played']) + "```", inline=True)
+                                e3.add_field(name="승리 한 경기", value="```" + str(overallData['game_won']) + "```", inline=True)
+                                e3.add_field(name="플레이 시간", value="```" + convert_seconds_to_time(overallData['time_played']) + "```", inline=True)
+                                await message.channel.send(embed=e3)
+
+                                e4 = discord.Embed(color=0xFC9A23, title="{} Overwatch Average 평균 10분".format(playerNickname))
+                                e4.add_field(name="모든 피해 완료", value="```" + str(overallData['all_damage_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="배리어 데미지 완료", value="```" + str(overallData['barrier_damage_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="사망", value="```" + str(overallData['death_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="제거 횟수", value="```" + str(overallData['elimination_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="최종 타격", value="```" + str(overallData['final_blow_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="치유 완료", value="```" + str(overallData['healing_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="영웅 피해 완료", value="```" + str(overallData['hero_damage_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="목표 처치", value="```" + str(overallData['objective_kill_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="목표 시간", value="```" + convert_seconds_to_time(overallData['objective_time_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="솔로 킬", value="```" + str(overallData['solo_kill_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="화재 소요 시간", value="```" + convert_seconds_to_time(overallData['time_spent_on_fire_avg_per_10_min']) + "```", inline=True)
+                                await message.channel.send(embed=e4)
+
+                                e5 = discord.Embed(color=0xFC9A23, title="{} Overwatch Combat".format(playerNickname))
+                                e5.add_field(name="모든 손상 완료", value="```" + str(overallData['all_damage_done']) + "```", inline=True)
+                                e5.add_field(name="베리어 손상 완료", value="```" + str(overallData['barrier_damage_done']) + "```", inline=True)
+                                e5.add_field(name="손상 완료", value="```" + str(overallData['damage_done']) + "```", inline=True)
+                                e5.add_field(name="사망자", value="```" + str(overallData['death']) + "```", inline=True)
+                                e5.add_field(name="제거", value="```" + str(overallData['elimination']) + "```", inline=True)
+                                e5.add_field(name="환경 살인", value="```" + str(overallData['environmental_kill']) + "```", inline=True)
+                                e5.add_field(name="최종 타격", value="```" + str(overallData['final_blow']) + "```", inline=True)
+                                e5.add_field(name="영웅 피해 완료", value="```" + str(overallData['hero_damage_done']) + "```", inline=True)
+                                e5.add_field(name="근접 최종 타격", value="```" + str(overallData['melee_final_blow']) + "```", inline=True)
+                                e5.add_field(name="멀티 킬", value="```" + str(overallData['multikill']) + "```", inline=True)
+                                e5.add_field(name="목표 처치", value="```" + str(overallData['objective_kill']) + "```", inline=True)
+                                e5.add_field(name="목표 시간", value="```" + convert_seconds_to_time(overallData['objective_time']) + "```", inline=True)
+                                e5.add_field(name="솔로 킬", value="```" + str(overallData['solo_kill']) + "```", inline=True)
+                                e5.add_field(name="불에 보낸 시간", value="```" + convert_seconds_to_time(overallData['time_spent_on_fire']) + "```", inline=True)
+                                await message.channel.send(embed=e5)
+
+                                e6 = discord.Embed(color=0xFC9A23, title="{} Overwatch Match Awards".format(playerNickname))
+                                e6.add_field(name="메달-골드", value="```" + str(overallData['medal_gold']) + "```", inline=True)
+                                e6.add_field(name="카드", value="```" + str(overallData['card']) + "```", inline=True)
+                                e6.add_field(name="메달", value="```" + str(overallData['medal']) + "```", inline=True)
+                                e6.add_field(name="메달-브론즈", value="```" + str(overallData['medal_bronze']) + "```", inline=True)
+                                e6.add_field(name="메달-실버", value="```" + str(overallData['medal_silver']) + "```", inline=True)
+                                await message.channel.send(embed=e6)
+                        
+                    elif response.status_code == 404:
+                        await message.channel.send("The user `{}` wasn't found.".format(playerNickname))
+                    else:
+                        await message.channel.send("Request returned status code " + str(response.status_code))
+        except HTTPError as e:
+            embed = discord.Embed(title="Not existing plyer",description="Can't find player " + playerNickname + "'s information.\nPlease check player's nickname again",color=0x5CD1E5)
+            await message.channel.send("Error : Not existing player", embed=embed)
+        except AttributeError as e:
+            embed = discord.Embed(title="Not existing plyer",description="Can't find player " + playerNickname + "'s information.\nPlease check player's nickname again",color=0x5CD1E5)
+            await message.channel.send("Error : Not existing player", embed=embed)
+
+    if message.content.startswith("!!옵치경쟁"):
+        STATS_URL = 'https://playoverwatch.com/en-us/career/{platform}/{battle_tag}'
+        AVAILABLE_PLAY_MODES = ('quick', 'competitive')
+        playerNickname = ''.join((message.content).split(' ')[1:])
+        try:
+            if len(message.content.split(" ")) == 1:
+                embed = discord.Embed(title="닉네임이 입력되지 않았습니다", description="", color=0x5CD1E5)
+                embed.add_field(name="Player nickname not entered",value="To use command !!옵치경쟁 (Nickname)", inline=False)
+                await message.channel.send("Error : Incorrect command usage ", embed=embed)
+            else:
+                
+                tagName = message.content.split(" ")[1:]
+                name = tagName[0].replace("#", "-")                
+                url = STATS_URL.format(platform='pc', battle_tag=name)
+
+                response = requests.get(url)
+
+                if response == None:
+                    embed = discord.Embed(title="Record not found", description="OverWatch Profile not found.",color=0x5CD1E5)
+                    embed.add_field(name="Profile search from overWatch API", value=URL, inline=False)
+                    await message.channel.send("OverWatch player " + playerNickname + "'s Profile not information",embed=embed)
+                else:
+                    if response.status_code == 200:
+                        tree = lxml.html.fromstring(response.text)
+                        output = {}
+                        output['level'] = extract_level(tree)
+                        output['endorsement'] = extract_endorsement(tree)
+                        output['icon_url'] = extract_icon_url(tree)
+                        competitive_rank = extract_competitive_rank(tree)
+                        if competitive_rank:
+                            output['competitive_rank'] = competitive_rank
+
+                        for mode in AVAILABLE_PLAY_MODES:
+                            if not has_played(tree, mode):
+                                continue
+
+                            output[mode] = {
+                                'overall': {},
+                                'heroes': {},
+                            }
+
+                            # overall
+                            output[mode]['overall'] = extract_stats(tree, mode, OVERALL_CATEGORY_ID)
+
+                            # heroes
+                            time_played_ratios = extract_time_played_ratios(tree, mode)
+                            for hero, category_id in HERO_CATEGORY_IDS.items():
+                                if not has_played(tree, mode, category_id):
+                                    continue
+
+                                output[mode]['heroes'][hero] = extract_stats(tree, mode, category_id)
+                                output[mode]['heroes'][hero]['time_played_ratio'] = time_played_ratios[hero]
+
+                        e = discord.Embed(color=0xFC9A23, title="{} Overwatch Profile".format(playerNickname))
+                        e.add_field(name="Level", value="```" + str(output['level']) + "```")
+                        
+                        endorsement = output['endorsement']
+                        e.add_field(name="endorsement Level", value="```" + str(endorsement['level']) + "```", inline=True)
+                        e.add_field(name="shotcaller", value="```" + str(endorsement['shotcaller']) + "```", inline=True)
+                        e.add_field(name="teammate", value="```" + str(endorsement['teammate']) + "```", inline=True)
+                        e.add_field(name="sportsmanship", value="```" + str(endorsement['sportsmanship']) + "```", inline=True)
+                        e.set_thumbnail(url=output['icon_url'])
+                        await message.channel.send("OVERWATCH player " + playerNickname + "'s Profile information",embed=e)
+
+                        quickData = output['competitive']
+
+                        if quickData != None:
+                            overallData = quickData['overall']
+                            #heroesData = quickData['heroes']
+
+                            if overallData != None:
+                                e1 = discord.Embed(color=0xFC9A23, title="{} Overwatch Best".format(playerNickname))
+                                e1.add_field(name="모든 피해 완료", value="```" + str(overallData['all_damage_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="배리어 데미지 완료", value="```" + str(overallData['barrier_damage_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="수비 지원", value="```" + str(overallData['defensive_assist_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="처치", value="```" + str(overallData['elimination_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="환경 처치", value="```" + str(overallData['environmental_kill_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="결정타", value="```" + str(overallData['final_blow_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="치유 완료", value="```" + str(overallData['healing_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="영웅 피해 완료", value="```" + str(overallData['hero_damage_done_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="연속 처치-최고", value="```" + str(overallData['kill_streak_best']) + "```", inline=True)
+                                e1.add_field(name="근접 결정타", value="```" + str(overallData['melee_final_blow_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="멀티 킬-최고", value="```" + str(overallData['multikill_best']) + "```", inline=True)
+                                e1.add_field(name="목표 처치", value="```" + str(overallData['objective_kill_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="목표 시간", value="```" + convert_seconds_to_time(overallData['objective_time_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="공격 지원", value="```" + str(overallData['offensive_assist_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="정찰 지원", value="```" + str(overallData['recon_assist_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="솔로 처치", value="```" + str(overallData['solo_kill_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="폭주 시간", value="```" + convert_seconds_to_time(overallData['time_spent_on_fire_most_in_game']) + "```", inline=True)
+                                e1.add_field(name="파괴 된 포탑", value="```" + str(overallData['turret_destroyed_most_in_game']) + "```", inline=True)
+                                await message.channel.send(embed=e1)
+
+                                e2 = discord.Embed(color=0xFC9A23, title="{} Overwatch Assists".format(playerNickname))
+                                e2.add_field(name="방어 지원", value="```" + str(overallData['defensive_assist']) + "```", inline=True)
+                                e2.add_field(name="치유 완료", value="```" + str(overallData['healing_done']) + "```", inline=True)
+                                e2.add_field(name="공격 지원", value="```" + str(overallData['offensive_assist']) + "```", inline=True)
+                                e2.add_field(name="정찰 지원", value="```" + str(overallData['recon_assist']) + "```", inline=True)
+                                await message.channel.send(embed=e2)
+
+                                e3 = discord.Embed(color=0xFC9A23, title="{} Overwatch Game".format(playerNickname))
+                                e3.add_field(name="패배 한 경기", value="```" + str(overallData['game_lost']) + "```", inline=True)
+                                e3.add_field(name="플레이 한 경기", value="```" + str(overallData['game_played']) + "```", inline=True)
+                                e3.add_field(name="승리 한 경기", value="```" + str(overallData['game_won']) + "```", inline=True)
+                                e3.add_field(name="플레이 시간", value="```" + convert_seconds_to_time(overallData['time_played']) + "```", inline=True)
+                                await message.channel.send(embed=e3)
+
+                                e4 = discord.Embed(color=0xFC9A23, title="{} Overwatch Average 평균 10분".format(playerNickname))
+                                e4.add_field(name="모든 피해 완료", value="```" + str(overallData['all_damage_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="배리어 데미지 완료", value="```" + str(overallData['barrier_damage_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="사망", value="```" + str(overallData['death_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="제거 횟수", value="```" + str(overallData['elimination_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="최종 타격", value="```" + str(overallData['final_blow_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="치유 완료", value="```" + str(overallData['healing_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="영웅 피해 완료", value="```" + str(overallData['hero_damage_done_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="목표 처치", value="```" + str(overallData['objective_kill_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="목표 시간", value="```" + convert_seconds_to_time(overallData['objective_time_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="솔로 킬", value="```" + str(overallData['solo_kill_avg_per_10_min']) + "```", inline=True)
+                                e4.add_field(name="화재 소요 시간", value="```" + convert_seconds_to_time(overallData['time_spent_on_fire_avg_per_10_min']) + "```", inline=True)
+                                await message.channel.send(embed=e4)
+
+                                e5 = discord.Embed(color=0xFC9A23, title="{} Overwatch Combat".format(playerNickname))
+                                e5.add_field(name="모든 손상 완료", value="```" + str(overallData['all_damage_done']) + "```", inline=True)
+                                e5.add_field(name="베리어 손상 완료", value="```" + str(overallData['barrier_damage_done']) + "```", inline=True)
+                                e5.add_field(name="손상 완료", value="```" + str(overallData['damage_done']) + "```", inline=True)
+                                e5.add_field(name="사망자", value="```" + str(overallData['death']) + "```", inline=True)
+                                e5.add_field(name="제거", value="```" + str(overallData['elimination']) + "```", inline=True)
+                                e5.add_field(name="환경 살인", value="```" + str(overallData['environmental_kill']) + "```", inline=True)
+                                e5.add_field(name="최종 타격", value="```" + str(overallData['final_blow']) + "```", inline=True)
+                                e5.add_field(name="영웅 피해 완료", value="```" + str(overallData['hero_damage_done']) + "```", inline=True)
+                                e5.add_field(name="근접 최종 타격", value="```" + str(overallData['melee_final_blow']) + "```", inline=True)
+                                e5.add_field(name="멀티 킬", value="```" + str(overallData['multikill']) + "```", inline=True)
+                                e5.add_field(name="목표 처치", value="```" + str(overallData['objective_kill']) + "```", inline=True)
+                                e5.add_field(name="목표 시간", value="```" + convert_seconds_to_time(overallData['objective_time']) + "```", inline=True)
+                                e5.add_field(name="솔로 킬", value="```" + str(overallData['solo_kill']) + "```", inline=True)
+                                e5.add_field(name="불에 보낸 시간", value="```" + convert_seconds_to_time(overallData['time_spent_on_fire']) + "```", inline=True)
+                                await message.channel.send(embed=e5)
+
+                                e6 = discord.Embed(color=0xFC9A23, title="{} Overwatch Match Awards".format(playerNickname))
+                                e6.add_field(name="메달-골드", value="```" + str(overallData['medal_gold']) + "```", inline=True)
+                                e6.add_field(name="카드", value="```" + str(overallData['card']) + "```", inline=True)
+                                e6.add_field(name="메달", value="```" + str(overallData['medal']) + "```", inline=True)
+                                e6.add_field(name="메달-브론즈", value="```" + str(overallData['medal_bronze']) + "```", inline=True)
+                                e6.add_field(name="메달-실버", value="```" + str(overallData['medal_silver']) + "```", inline=True)
+                                await message.channel.send(embed=e6)
+                        
+                    elif response.status_code == 404:
+                        await message.channel.send("The user `{}` wasn't found.".format(playerNickname))
+                    else:
+                        await message.channel.send("Request returned status code " + str(response.status_code))
+        except HTTPError as e:
+            embed = discord.Embed(title="Not existing plyer",description="Can't find player " + playerNickname + "'s information.\nPlease check player's nickname again",color=0x5CD1E5)
+            await message.channel.send("Error : Not existing player", embed=embed)
+        except AttributeError as e:
+            embed = discord.Embed(title="Not existing plyer",description="Can't find player " + playerNickname + "'s information.\nPlease check player's nickname again",color=0x5CD1E5)
+            await message.channel.send("Error : Not existing player", embed=embed)
+    
     if message.content.startswith("!!도움말"):
         try:
             embed = discord.Embed(title="AliveBot", description="```Help Information```",color=0x5CD1E5)
@@ -917,6 +1242,8 @@ async def on_message(message):
             embed.add_field(name="배그스쿼드1인칭", value="```!!배그스쿼드1인칭 [게임아이디]```", inline=False)
             embed.add_field(name="배그스쿼드3인칭", value="```!!배그스쿼드3인칭 [게임아이디]```", inline=False)
             embed.add_field(name="롤전적", value="```!!롤전적 [게임아이디]```", inline=False)
+            embed.add_field(name="옵치일반", value="```!!옵치일반 [배틀Tag]```", inline=False)
+            embed.add_field(name="옵치경쟁", value="```!!옵치경쟁 [배틀Tag]```", inline=False)
             await message.channel.send("", embed=embed)
         except:
             embed = discord.Embed(title="도움말 오류",description="날 점검해줘~~~~~~",color=0x5CD1E5)
