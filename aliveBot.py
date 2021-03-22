@@ -1249,4 +1249,4 @@ async def on_message(message):
             embed = discord.Embed(title="도움말 오류",description="날 점검해줘~~~~~~",color=0x5CD1E5)
             await message.channel.send("Error : help", embed=embed)
 
-client.run('ODIyNDkzNTQ5NjAwOTY0NjA4.YFTEzw.k3fx2S9eUcE7VuGuHirhli6srcc');
+client.run('ODIyNDkzNTQ5NjAwOTY0NjA4.YFTEzw.JjA01tb-KSuYxCCUfM-8Yrh-ndc');
