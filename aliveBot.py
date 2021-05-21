@@ -85,23 +85,10 @@ async def on_ready():
     logging.info("Logged in as")
     logging.info("bot name : %s", client.user.name)
     logging.info("bot id : %s", client.user.id)
-    client.loop.create_task(status_task())
+    #client.loop.create_task(status_task())
     #봇 상태 출력
-    # game = discord.Game("개발중... 하하하하.!!!")
-    # await client.change_presence(status=discord.Status.online, activity=game)
-
-@client.event
-async def on_member_join(member):
-    msg = "<@{}>님이 서버에 들어오셨어요. 환영합니다.".format(str(member.id))
-    await find_first_channel(member.guild.text_channels).send(msg)
-    return None
-
-@client.event
-# 사버에 멤버가 나갔을 때 수행 될 이벤트
-async def on_member_remove(member):
-    msg = "<@{}>님이 서버에서 나가거나 추방되었습니다.".format(str(member.id))
-    await find_first_channel(member.guild.text_channels).send(msg)
-    return None
+    game = discord.Game("!!도움말 : 도움말")
+    await client.change_presence(status=discord.Status.online, activity=game)
 
 @client.event
 async def on_message(message):
@@ -1249,4 +1236,4 @@ async def on_message(message):
             embed = discord.Embed(title="도움말 오류",description="날 점검해줘~~~~~~",color=0x5CD1E5)
             await message.channel.send("Error : help", embed=embed)
 
-client.run('TOKEN');
+client.run(os.environ['token']);
