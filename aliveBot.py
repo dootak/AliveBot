@@ -1231,5 +1231,5 @@ async def on_message(message):
         except:
             embed = discord.Embed(title="도움말 오류",description="날 점검해줘~~~~~~",color=0x5CD1E5)
             await message.channel.send("Error : help", embed=embed)
-
+ 
 client.run(os.environ['token']);
